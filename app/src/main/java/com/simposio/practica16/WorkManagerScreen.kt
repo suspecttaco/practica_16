@@ -58,6 +58,7 @@ fun WorkManagerScreen() {
 
     var workId by remember { mutableStateOf<UUID?>(null) }
     var requireInternet by remember { mutableStateOf(false) }
+    var requireCharging by remember { mutableStateOf(false) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
@@ -173,6 +174,22 @@ fun WorkManagerScreen() {
                 )
             }
 
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "Solo mientras esta cargando",
+                    style = MaterialTheme.typography.bodyLarge
+                )
+
+                Switch(
+                    checked = requireCharging,
+                    onCheckedChange = { requireCharging = it }
+                )
+            }
+
             HorizontalDivider()
 
             Button(
@@ -182,6 +199,7 @@ fun WorkManagerScreen() {
                         .setRequiredNetworkType(
                             if (requireInternet) NetworkType.CONNECTED else NetworkType.NOT_REQUIRED
                         )
+                        .setRequiresCharging(requireCharging)
                         .build()
 
                     val inputData = workDataOf("FILE_NAME" to "fotos_practica16.zip")
@@ -206,6 +224,7 @@ fun WorkManagerScreen() {
                         .setRequiredNetworkType(
                             if (requireInternet) NetworkType.CONNECTED else NetworkType.NOT_REQUIRED
                         )
+                        .setRequiresCharging(requireCharging)
                         .build()
 
                     val inputData = workDataOf("FILE_NAME" to "automatic_backup.db")
