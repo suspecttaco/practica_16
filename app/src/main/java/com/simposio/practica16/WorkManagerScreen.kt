@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -46,8 +48,6 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.workDataOf
-import kotlinx.coroutines.flow.flowOf
-import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -56,7 +56,6 @@ fun WorkManagerScreen() {
     val context = LocalContext.current
     val workManager = remember { WorkManager.getInstance(context) }
 
-    var workId by remember { mutableStateOf<UUID?>(null) }
     var requireInternet by remember { mutableStateOf(false) }
     var requireCharging by remember { mutableStateOf(false) }
 
@@ -77,31 +76,9 @@ fun WorkManagerScreen() {
         }
     }
 
-    val workInfo by remember(workId) {
-        if (workId != null) {
-            workManager.getWorkInfoByIdFlow(workId!!)
-        } else {
-            flowOf(null)
-        }
-    }.collectAsState(initial = null)
-
-    val textStatus = when (workInfo?.state) {
-        WorkInfo.State.ENQUEUED -> "EN ESPERA (EN COLA)"
-        WorkInfo.State.RUNNING -> "EN EJECUCION..."
-        WorkInfo.State.SUCCEEDED -> "COMPLETADO CON EXITO"
-        WorkInfo.State.FAILED -> "FALLO LA TAREA"
-        WorkInfo.State.BLOCKED -> "BLOQUEADO"
-        WorkInfo.State.CANCELLED -> "CANCELADO"
-        null -> "SIN TAREA ACTIVA"
-    }
-
-    val progress = if (workInfo?.state == WorkInfo.State.SUCCEEDED) {
-        100
-    } else {
-        workInfo?.progress?.getInt("PROGRESO", 0) ?: 0
-    }
-
-    val resultMessage = workInfo?.outputData?.getString("RESULTADO")
+    val workList by workManager
+        .getWorkInfosByTagFlow("backup_worker")
+        .collectAsState(initial = emptyList())
 
     Scaffold(
         topBar = {
@@ -121,39 +98,20 @@ fun WorkManagerScreen() {
             verticalArrangement = Arrangement.spacedBy(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+            if (workList.isEmpty()) {
+                Text(
+                    text = "SIN TAREAS ACTIVAS",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
                 )
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
+            } else {
+                LazyColumn(
+                    modifier = Modifier.weight(1f),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text(
-                        text = "Estado de la tarea: $textStatus",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-
-                    LinearProgressIndicator(
-                        progress = { progress / 100f },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    Text(
-                        text = "Progreso: $progress%",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-
-                    if (resultMessage != null) {
-                        Text(
-                            text = resultMessage,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.SemiBold
-                        )
+                    items(workList, key = { it.id }) { info ->
+                        WorkItemCard(info)
                     }
                 }
             }
@@ -207,11 +165,11 @@ fun WorkManagerScreen() {
                     val uniqueRequest = OneTimeWorkRequestBuilder<BackupWorker>()
                         .setConstraints(restrictions)
                         .setInputData(inputData)
-                        .addTag("unique_backup")
+                        .addTag("backup_worker")
+                        .addTag("file:fotos_practica16.zip")
                         .build()
 
                     workManager.enqueue(uniqueRequest)
-                    workId = uniqueRequest.id
                 }
             ) {
                 Text("Iniciar Respaldo Unico (OneTime)")
@@ -234,6 +192,8 @@ fun WorkManagerScreen() {
                     )
                         .setConstraints(restrictions)
                         .setInputData(inputData)
+                        .addTag("backup_worker")
+                        .addTag("file:automatic_backup.db")
                         .build()
 
                     workManager.enqueueUniquePeriodicWork(
@@ -241,11 +201,17 @@ fun WorkManagerScreen() {
                         ExistingPeriodicWorkPolicy.UPDATE,
                         periodicRequest
                     )
-
-                    workId = periodicRequest.id
                 }
             ) {
                 Text("Programar Respaldo Periodico (15 min)")
+            }
+
+            TextButton(
+                onClick = {
+                    workManager.pruneWork()
+                }
+            ) {
+                Text("Limpiar Tareas Finalizadas")
             }
 
             TextButton(
@@ -258,6 +224,63 @@ fun WorkManagerScreen() {
                     color = MaterialTheme.colorScheme.error
                 )
             }
+        }
+    }
+}
+
+@Composable
+fun WorkItemCard(info: WorkInfo) {
+    val fileName = info.tags
+        .firstOrNull { it.startsWith("file:") }
+        ?.removePrefix("file:") ?: "respaldo"
+
+    val textStatus = when (info.state) {
+        WorkInfo.State.ENQUEUED -> "EN ESPERA (EN COLA)"
+        WorkInfo.State.RUNNING -> "EN EJECUCION..."
+        WorkInfo.State.SUCCEEDED -> "COMPLETADO CON EXITO"
+        WorkInfo.State.FAILED -> "FALLO LA TAREA"
+        WorkInfo.State.BLOCKED -> "BLOQUEADO"
+        WorkInfo.State.CANCELLED -> "CANCELADO"
+    }
+
+    val progress = if (info.state == WorkInfo.State.SUCCEEDED) {
+        100
+    } else {
+        info.progress.getInt("PROGRESS", 0)
+    }
+
+    val resultMessage = info.outputData.getString("RESULT")
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(
+                text = "$fileName (${info.id.toString().take(8)})",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+
+            Text(
+                text = "Estado: $textStatus",
+                style = MaterialTheme.typography.bodyMedium
+            )
+
+            LinearProgressIndicator(
+                progress = { progress / 100f },
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Text(
+                text = "Progreso: $progress%",
+                style = MaterialTheme.typography.bodyMedium
+            )
         }
     }
 }
